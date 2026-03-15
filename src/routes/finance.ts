@@ -1,77 +1,30 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
 import {
+  createFinanceEntry,
   createFinanceCategory,
   defaultInvestmentSettings,
   getFinanceCategories,
+  getFinanceEntries,
   getFinanceState,
   replaceFinanceEntries,
   replaceInvestmentSettings,
-} from "../repositories/finance.js";
-import { getAuthenticatedUser } from "../middleware/auth.js";
-import type { FinanceEntryKind, FinanceItemInput, InvestmentSettings } from "../lib/types.js";
+} from "@repositories/finance";
+import { getAuthenticatedUser } from "@middleware/auth";
+import {
+  parseCategoryBody,
+  parseCreateEntry,
+  parseEntry,
+  parseEntryTypeQuery,
+  parseSettings,
+} from "@lib/finance-input";
+import type {
+  CreateCategoryBody,
+  CreateEntryBody,
+  ReplaceEntriesBody,
+  UpdateSettingsBody,
+} from "@app-types/finance";
 
 const financeRouter = Router();
-
-function isEntryKind(value: unknown): value is FinanceEntryKind {
-  return value === "income" || value === "expense";
-}
-
-function isFrequency(value: unknown): value is FinanceItemInput["frequency"] {
-  return value === "weekly" || value === "biweekly" || value === "monthly" || value === "yearly";
-}
-
-function normalizeFinanceItem(raw: unknown): FinanceItemInput {
-  const value = raw as Partial<FinanceItemInput> & { category?: unknown };
-
-  if (!value || typeof value !== "object") {
-    throw new Error("Invalid finance item payload");
-  }
-
-  const categoryId = typeof value.categoryId === "string" ? value.categoryId.trim() : "";
-  const categoryName =
-    typeof value.categoryName === "string"
-      ? value.categoryName.trim()
-      : typeof value.category === "string"
-        ? value.category.trim()
-        : "";
-
-  if (!value.id || !value.name || !value.rawAmount || !isFrequency(value.frequency) || (!categoryId && !categoryName)) {
-    throw new Error("Finance item is missing required fields");
-  }
-
-  const amount = Number(value.amount);
-  if (!Number.isFinite(amount)) {
-    throw new Error("Finance item amount must be numeric");
-  }
-
-  return {
-    id: String(value.id),
-    name: String(value.name).trim(),
-    categoryId: categoryId || undefined,
-    categoryName: categoryName || undefined,
-    amount,
-    rawAmount: String(value.rawAmount).trim(),
-    frequency: value.frequency,
-  };
-}
-
-function normalizeSettings(raw: unknown): InvestmentSettings {
-  const value = raw as Partial<InvestmentSettings>;
-  const settings = {
-    annualReturn: Number(value?.annualReturn),
-    years: Number(value?.years),
-    initialAmount: Number(value?.initialAmount),
-    dividendYield: Number(value?.dividendYield),
-    incomeGrowth: Number(value?.incomeGrowth),
-    expenseGrowth: Number(value?.expenseGrowth),
-  } satisfies InvestmentSettings;
-
-  if (Object.values(settings).some((entry) => !Number.isFinite(entry))) {
-    throw new Error("Investment settings must be numeric");
-  }
-
-  return settings;
-}
 
 financeRouter.get("/state", async (req, res, next) => {
   try {
@@ -84,24 +37,28 @@ financeRouter.get("/state", async (req, res, next) => {
 
 financeRouter.get("/categories", async (req, res, next) => {
   try {
-    const categories = await getFinanceCategories(getAuthenticatedUser(req).userId);
+    const categories = await getFinanceCategories();
     res.json(categories);
   } catch (error) {
     next(error);
   }
 });
 
-financeRouter.post("/categories", async (req, res, next) => {
+financeRouter.get("/entries", async (req: Request<Record<string, string>, object, object, { type?: string }>, res, next) => {
   try {
-    if (!isEntryKind(req.body?.kind)) {
-      throw new Error("Category kind must be income or expense");
-    }
+    const type = parseEntryTypeQuery(req.query?.type);
+    const entries = await getFinanceEntries(getAuthenticatedUser(req).userId, type);
+    res.json(entries);
+  } catch (error) {
+    next(error);
+  }
+});
 
-    const category = await createFinanceCategory(
-      getAuthenticatedUser(req).userId,
-      req.body.kind,
-      String(req.body?.name ?? ""),
-    );
+financeRouter.post("/categories", async (req: Request<Record<string, string>, object, CreateCategoryBody>, res, next) => {
+  try {
+    const { type, name } = parseCategoryBody(req.body);
+
+    const category = await createFinanceCategory(type, name);
 
     res.status(201).json(category);
   } catch (error) {
@@ -109,9 +66,38 @@ financeRouter.post("/categories", async (req, res, next) => {
   }
 });
 
-financeRouter.put("/revenues", async (req, res, next) => {
+financeRouter.post("/entries", async (req: Request<Record<string, string>, object, CreateEntryBody>, res, next) => {
   try {
-    const entries = Array.isArray(req.body) ? req.body.map(normalizeFinanceItem) : [];
+    const {
+      type,
+      id,
+      name,
+      categoryId,
+      categoryName,
+      amount,
+      rawAmount,
+      frequency,
+    } = parseCreateEntry(req.body);
+
+    const created = await createFinanceEntry(getAuthenticatedUser(req).userId, type, {
+      id,
+      name,
+      categoryId,
+      categoryName,
+      amount,
+      rawAmount,
+      frequency,
+    });
+    res.status(201).json(created);
+  } catch (error) {
+    next(error);
+  }
+});
+
+financeRouter.put("/revenues", async (req: Request<Record<string, string>, object, ReplaceEntriesBody>, res, next) => {
+  try {
+    const entriesPayload = req.body;
+    const entries = Array.isArray(entriesPayload) ? entriesPayload.map(parseEntry) : [];
     const saved = await replaceFinanceEntries(getAuthenticatedUser(req).userId, "income", entries);
     res.json(saved);
   } catch (error) {
@@ -119,9 +105,10 @@ financeRouter.put("/revenues", async (req, res, next) => {
   }
 });
 
-financeRouter.put("/costs", async (req, res, next) => {
+financeRouter.put("/costs", async (req: Request<Record<string, string>, object, ReplaceEntriesBody>, res, next) => {
   try {
-    const entries = Array.isArray(req.body) ? req.body.map(normalizeFinanceItem) : [];
+    const entriesPayload = req.body;
+    const entries = Array.isArray(entriesPayload) ? entriesPayload.map(parseEntry) : [];
     const saved = await replaceFinanceEntries(getAuthenticatedUser(req).userId, "expense", entries);
     res.json(saved);
   } catch (error) {
@@ -129,9 +116,10 @@ financeRouter.put("/costs", async (req, res, next) => {
   }
 });
 
-financeRouter.put("/settings", async (req, res, next) => {
+financeRouter.put("/settings", async (req: Request<Record<string, string>, object, UpdateSettingsBody>, res, next) => {
   try {
-    const settings = normalizeSettings(req.body ?? defaultInvestmentSettings);
+    const settingsPayload = req.body ?? defaultInvestmentSettings;
+    const settings = parseSettings(settingsPayload);
     const saved = await replaceInvestmentSettings(getAuthenticatedUser(req).userId, settings);
     res.json(saved);
   } catch (error) {

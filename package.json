@@ -4,10 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node --import @swc-node/register/esm-register --watch src/index.ts",
-    "build": "swc src -d dist --source-maps",
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json && tsc-alias -p tsconfig.json --resolve-full-paths",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "start": "node dist/index.js"
+    "start": "node dist/src/index.js",
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "db:logs": "docker compose logs -f postgres",
+    "db:reset": "docker compose down -v && docker compose up -d postgres",
+    "db:seed-categories": "docker compose exec -T postgres psql -U postgres -d finance_app -f /docker-entrypoint-initdb.d/02-seed-categories.sql"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -16,18 +21,18 @@
     "jsonwebtoken": "^9.0.3",
     "nodemailer": "^8.0.2",
     "pg": "^8.16.3",
-    "plaid": "^38.0.0"
+    "plaid": "^38.0.0",
+    "zod": "^3.24.1"
   },
   "devDependencies": {
-    "@swc-node/register": "^1.11.1",
-    "@swc/cli": "^0.8.0",
-    "@swc/core": "^1.15.18",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^24.0.0",
     "@types/nodemailer": "^7.0.11",
     "@types/pg": "^8.18.0",
+    "tsc-alias": "^1.8.16",
+    "tsx": "^4.20.5",
     "typescript": "^5.9.2"
   }
 }

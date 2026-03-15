@@ -1,16 +1,26 @@
-import { Router } from "express";
-import { getAuthenticatedUser, requireAuth } from "../middleware/auth.js";
-import { logout, refreshSession, registerUser, requestEmailCode, verifyEmailCode } from "../services/auth.js";
+import { Router, type Request } from "express";
+import { clearAuthCookies, getRefreshTokenFromCookies, setAuthCookies } from "@lib/auth-cookies";
+import { getAuthenticatedUser, requireAuth } from "@middleware/auth";
+import { logout, refreshSession, registerUser, requestEmailCode, verifyEmailCode } from "@services/auth";
+import type {
+  LogoutBody,
+  RefreshBody,
+  RegisterBody,
+  RequestCodeBody,
+  VerifyCodeBody,
+} from "@app-types/auth";
 
 const authRouter = Router();
 
-authRouter.post("/register", async (req, res, next) => {
+authRouter.post("/register", async (req: Request<Record<string, string>, object, RegisterBody>, res, next) => {
   try {
+    const { email, name, phone, birthDate } = req.body ?? {};
+
     const payload = await registerUser({
-      email: String(req.body?.email ?? ""),
-      name: String(req.body?.name ?? ""),
-      phone: String(req.body?.phone ?? ""),
-      birthDate: String(req.body?.birthDate ?? ""),
+      email: String(email ?? ""),
+      name: String(name ?? ""),
+      phone: String(phone ?? ""),
+      birthDate: String(birthDate ?? ""),
     });
 
     res.status(201).json(payload);
@@ -19,36 +29,44 @@ authRouter.post("/register", async (req, res, next) => {
   }
 });
 
-authRouter.post("/request-code", async (req, res, next) => {
+authRouter.post("/request-code", async (req: Request<Record<string, string>, object, RequestCodeBody>, res, next) => {
   try {
-    await requestEmailCode(String(req.body?.email ?? ""));
+    const { email } = req.body ?? {};
+    await requestEmailCode(String(email ?? ""));
     res.json({ message: "If the email address is valid, a sign-in code has been sent." });
   } catch (error) {
     next(error);
   }
 });
 
-authRouter.post("/verify-code", async (req, res, next) => {
+authRouter.post("/verify-code", async (req: Request<Record<string, string>, object, VerifyCodeBody>, res, next) => {
   try {
-    const session = await verifyEmailCode(String(req.body?.email ?? ""), String(req.body?.code ?? ""));
-    res.json(session);
+    const { email, code } = req.body ?? {};
+    const session = await verifyEmailCode(String(email ?? ""), String(code ?? ""));
+    setAuthCookies(res, session);
+    res.json({ user: session.user });
   } catch (error) {
     next(error);
   }
 });
 
-authRouter.post("/refresh", async (req, res, next) => {
+authRouter.post("/refresh", async (req: Request<Record<string, string>, object, RefreshBody>, res, next) => {
   try {
-    const session = await refreshSession(String(req.body?.refreshToken ?? ""));
-    res.json(session);
+    const { refreshToken: bodyRefreshToken } = req.body ?? {};
+    const refreshToken = String(bodyRefreshToken ?? getRefreshTokenFromCookies(req) ?? "");
+    const session = await refreshSession(refreshToken);
+    setAuthCookies(res, session);
+    res.json({ user: session.user });
   } catch (error) {
     next(error);
   }
 });
 
-authRouter.post("/logout", async (req, res, next) => {
+authRouter.post("/logout", async (req: Request<Record<string, string>, object, LogoutBody>, res, next) => {
   try {
-    await logout(String(req.body?.refreshToken ?? ""));
+    const { refreshToken: bodyRefreshToken } = req.body ?? {};
+    await logout(String(bodyRefreshToken ?? getRefreshTokenFromCookies(req) ?? ""));
+    clearAuthCookies(res);
     res.json({ success: true });
   } catch (error) {
     next(error);

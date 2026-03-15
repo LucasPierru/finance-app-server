@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
-import { pool } from "../db/pool.js";
-import { normalizeEmail } from "../lib/auth.js";
-import type { User } from "../lib/types.js";
+import { pool } from "@db/pool";
+import { normalizeEmail } from "@lib/auth";
+import type { User } from "@lib/types";
 
 type Queryable = Pool | PoolClient;
 
@@ -77,7 +77,7 @@ export async function upsertUserProfileByEmail(
   const result = await queryable.query(
     `INSERT INTO users (id, email, name, phone, birth_date, created_at, updated_at)
      VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
-     ON CONFLICT (email) DO UPDATE SET
+     ON CONFLICT (email) WHERE email IS NOT NULL DO UPDATE SET
        name = EXCLUDED.name,
        phone = EXCLUDED.phone,
        birth_date = EXCLUDED.birth_date,

@@ -1,14 +1,15 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { Products } from "plaid";
-import { assertPlaidConfigured, normalizePlaidCountryCode, plaidClient } from "../lib/plaid.js";
-import { getAuthenticatedUser } from "../middleware/auth.js";
-import type { BankAccount, BankTransaction, StoredBankState } from "../lib/types.js";
+import { assertPlaidConfigured, normalizePlaidCountryCode, plaidClient } from "@lib/plaid";
+import { getAuthenticatedUser } from "@middleware/auth";
+import type { BankAccount, BankTransaction, StoredBankState } from "@lib/types";
+import type { CreateLinkTokenBody, ExchangePublicTokenBody } from "@app-types/plaid";
 import {
   clearStoredBankState,
   getBankConnectionState,
   getStoredBankState,
   replaceStoredBankState,
-} from "../repositories/plaid.js";
+} from "@repositories/plaid";
 
 const plaidRouter = Router();
 
@@ -120,10 +121,11 @@ plaidRouter.get("/state", async (req, res, next) => {
   }
 });
 
-plaidRouter.post("/link-token", async (req, res, next) => {
+plaidRouter.post("/link-token", async (req: Request<Record<string, string>, object, CreateLinkTokenBody>, res, next) => {
   try {
     assertPlaidConfigured();
-    const countryCode = normalizePlaidCountryCode(req.body?.countryCode);
+    const { countryCode: bodyCountryCode } = req.body ?? {};
+    const countryCode = normalizePlaidCountryCode(bodyCountryCode);
     const response = await plaidClient.linkTokenCreate({
       user: {
         client_user_id: getAuthenticatedUser(req).userId,
@@ -140,12 +142,13 @@ plaidRouter.post("/link-token", async (req, res, next) => {
   }
 });
 
-plaidRouter.post("/exchange-public-token", async (req, res, next) => {
+plaidRouter.post("/exchange-public-token", async (req: Request<Record<string, string>, object, ExchangePublicTokenBody>, res, next) => {
   try {
     assertPlaidConfigured();
+    const { publicToken: bodyPublicToken, institutionName: bodyInstitutionName } = req.body ?? {};
 
-    const publicToken = String(req.body?.publicToken ?? "").trim();
-    const institutionName = req.body?.institutionName ? String(req.body.institutionName) : null;
+    const publicToken = String(bodyPublicToken ?? "").trim();
+    const institutionName = bodyInstitutionName ? String(bodyInstitutionName) : null;
 
     if (!publicToken) {
       res.status(400).json({ message: "publicToken is required" });

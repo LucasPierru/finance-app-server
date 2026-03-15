@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from "pg";
-import { pool } from "../db/pool.js";
+import { pool } from "@db/pool";
 
 interface LoginCodeRow {
   id: string;

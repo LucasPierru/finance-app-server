@@ -1,5 +1,5 @@
-import { pool } from "../db/pool.js";
-import type { BankAccount, BankConnectionState, BankTransaction, StoredBankState } from "../lib/types.js";
+import { pool } from "@db/pool";
+import type { BankAccount, BankConnectionState, BankTransaction, StoredBankState } from "@lib/types";
 
 function mapAccountRow(row: Record<string, unknown>): BankAccount {
   return {

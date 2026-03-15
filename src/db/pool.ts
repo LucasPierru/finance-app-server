@@ -1,5 +1,5 @@
 import { Pool } from "pg";
-import { serverEnv } from "../config/env.js";
+import { serverEnv } from "@config/env";
 
 export const pool = new Pool({
   connectionString: serverEnv.databaseUrl,

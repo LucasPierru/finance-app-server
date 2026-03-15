@@ -1,13 +1,14 @@
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
-import { serverEnv } from "../config/env.js";
-import { AppError } from "./errors.js";
-import type { User } from "./types.js";
+import { serverEnv } from "@config/env";
+import { AppError } from "@lib/errors";
+import type { User } from "@lib/types";
 
 interface TokenPayload {
   sub: string;
   email: string;
   type: "access" | "refresh";
+  jti: string;
 }
 
 export interface AuthenticatedUser {
@@ -66,6 +67,7 @@ export function createAccessToken(user: User): string {
       sub: user.id,
       email: user.email,
       type: "access",
+      jti: crypto.randomUUID(),
     },
     serverEnv.jwtAccessSecret,
     serverEnv.accessTokenTtl,
@@ -78,6 +80,7 @@ export function createRefreshToken(user: User): string {
       sub: user.id,
       email: user.email,
       type: "refresh",
+      jti: crypto.randomUUID(),
     },
     serverEnv.jwtRefreshSecret,
     serverEnv.refreshTokenTtl,

@@ -6,14 +6,15 @@ export interface User {
   birthDate: string | null;
 }
 
-export type FinanceEntryKind = "income" | "expense";
+export type FinanceEntryType = "income" | "expense";
 
 export type FinanceFrequency = "weekly" | "biweekly" | "monthly" | "yearly";
 
 export interface FinanceCategory {
   id: string;
-  kind: FinanceEntryKind;
+  type: FinanceEntryType;
   name: string;
+  keywords: string[];
 }
 
 export interface FinanceItemInput {
@@ -34,6 +35,10 @@ export interface FinanceItem {
   amount: number;
   rawAmount: string;
   frequency: FinanceFrequency;
+}
+
+export interface FinanceEntry extends FinanceItem {
+  type: FinanceEntryType;
 }
 
 export interface InvestmentSettings {

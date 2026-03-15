@@ -1,5 +1,5 @@
 import { Configuration, CountryCode, PlaidApi, PlaidEnvironments } from "plaid";
-import { plaidCredentialsConfigured, serverEnv } from "../config/env.js";
+import { plaidCredentialsConfigured, serverEnv } from "@config/env";
 
 const environment =
   serverEnv.plaidEnv === "production"

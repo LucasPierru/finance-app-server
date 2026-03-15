@@ -1,5 +1,5 @@
 import nodemailer, { type Transporter } from "nodemailer";
-import { serverEnv } from "../config/env.js";
+import { serverEnv } from "@config/env";
 
 let transporter: Transporter | null = null;
 
@@ -25,7 +25,10 @@ function getTransporter(): Transporter {
 
 export async function sendVerificationCode(email: string, code: string): Promise<void> {
   if (!smtpConfigured()) {
-    console.info(`Auth code for ${email}: ${code}`);
+    console.log(`\n=============================`);
+    console.log(`  Auth code for ${email}`);
+    console.log(`  Code: ${code}`);
+    console.log(`=============================\n`);
     return;
   }
 

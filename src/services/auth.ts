@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from "pg";
-import { pool } from "../db/pool.js";
+import { pool } from "@db/pool";
 import {
   createAccessToken,
   createRefreshToken,
@@ -7,11 +7,11 @@ import {
   hashSecret,
   normalizeEmail,
   verifyRefreshToken,
-} from "../lib/auth.js";
-import { AppError } from "../lib/errors.js";
-import { sendVerificationCode } from "../lib/mailer.js";
-import type { User } from "../lib/types.js";
-import { serverEnv } from "../config/env.js";
+} from "@lib/auth";
+import { AppError } from "@lib/errors";
+import { sendVerificationCode } from "@lib/mailer";
+import type { User } from "@lib/types";
+import { serverEnv } from "@config/env";
 import {
   consumeLoginCode,
   getActiveRefreshToken,
@@ -20,8 +20,8 @@ import {
   revokeRefreshTokenByHash,
   storeLoginCode,
   storeRefreshToken,
-} from "../repositories/auth.js";
-import { findOrCreateUserByEmail, getUserById, markUserEmailVerified, upsertUserProfileByEmail } from "../repositories/users.js";
+} from "@repositories/auth";
+import { findOrCreateUserByEmail, getUserById, markUserEmailVerified, upsertUserProfileByEmail } from "@repositories/users";
 
 interface AuthSession {
   user: User;
@@ -91,6 +91,7 @@ function normalizeRegisterInput(input: { email: string; name: string; phone: str
 
   const parsedBirthDate = new Date(`${birthDate}T00:00:00.000Z`);
   const normalizedBirthDate = Number.isNaN(parsedBirthDate.getTime()) ? "" : parsedBirthDate.toISOString().slice(0, 10);
+
   if (!normalizedBirthDate || normalizedBirthDate !== birthDate) {
     throw new AppError(400, "birthDate must use YYYY-MM-DD format");
   }

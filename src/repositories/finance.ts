@@ -1,15 +1,16 @@
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
-import { pool } from "../db/pool.js";
-import { AppError } from "../lib/errors.js";
+import { pool } from "@db/pool";
+import { AppError } from "@lib/errors";
 import type {
   FinanceCategory,
-  FinanceEntryKind,
+  FinanceEntry,
+  FinanceEntryType,
   FinanceItem,
   FinanceItemInput,
   FinanceState,
   InvestmentSettings,
-} from "../lib/types.js";
+} from "@lib/types";
 
 const defaultInvestmentSettings: InvestmentSettings = {
   annualReturn: 7,
@@ -23,8 +24,9 @@ const defaultInvestmentSettings: InvestmentSettings = {
 function mapFinanceCategory(row: Record<string, unknown>): FinanceCategory {
   return {
     id: String(row.id),
-    kind: row.kind as FinanceEntryKind,
+    type: row.type as FinanceEntryType,
     name: String(row.name),
+    keywords: Array.isArray(row.keywords) ? (row.keywords as string[]) : [],
   };
 }
 
@@ -40,9 +42,22 @@ function mapFinanceItem(row: Record<string, unknown>): FinanceItem {
   };
 }
 
+function mapFinanceEntry(row: Record<string, unknown>): FinanceEntry {
+  return {
+    id: String(row.id),
+    type: row.type as FinanceEntryType,
+    name: String(row.name),
+    categoryId: String(row.category_id),
+    categoryName: String(row.category_name),
+    amount: Number(row.amount),
+    rawAmount: String(row.raw_amount),
+    frequency: row.frequency as FinanceEntry["frequency"],
+  };
+}
+
 async function resolveCategory(
   userId: string,
-  kind: FinanceEntryKind,
+  type: FinanceEntryType,
   entry: FinanceItemInput,
   cache: Map<string, FinanceCategory>,
   client: PoolClient,
@@ -57,10 +72,10 @@ async function resolveCategory(
     }
 
     const result = await client.query(
-      `SELECT id, kind, name
+      `SELECT id, type, name, keywords
        FROM entry_categories
-       WHERE id = $1 AND user_id = $2 AND kind = $3`,
-      [entry.categoryId, userId, kind],
+       WHERE id = $1 AND type = $2`,
+      [entry.categoryId, type],
     );
 
     if (result.rowCount === 0) {
@@ -69,7 +84,7 @@ async function resolveCategory(
 
     const category = mapFinanceCategory(result.rows[0]);
     cache.set(cacheKey, category);
-    cache.set(`name:${kind}:${category.name.toLowerCase()}`, category);
+    cache.set(`name:${type}:${category.name.toLowerCase()}`, category);
     return category;
   }
 
@@ -77,18 +92,18 @@ async function resolveCategory(
     throw new AppError(400, "Finance item category is required");
   }
 
-  const cacheKey = `name:${kind}:${categoryName.toLowerCase()}`;
+  const cacheKey = `name:${type}:${categoryName.toLowerCase()}`;
   const cached = cache.get(cacheKey);
   if (cached) {
     return cached;
   }
 
   const existingResult = await client.query(
-    `SELECT id, kind, name
+    `SELECT id, type, name, keywords
      FROM entry_categories
-     WHERE user_id = $1 AND kind = $2 AND LOWER(name) = LOWER($3)
+     WHERE type = $1 AND LOWER(name) = LOWER($2)
      LIMIT 1`,
-    [userId, kind, categoryName],
+    [type, categoryName],
   );
 
   if ((existingResult.rowCount ?? 0) > 0) {
@@ -98,11 +113,31 @@ async function resolveCategory(
     return existingCategory;
   }
 
+  const keywordMatchResult = await client.query(
+    `SELECT id, type, name, keywords
+     FROM entry_categories
+     WHERE type = $1
+       AND EXISTS (
+         SELECT 1
+         FROM unnest(keywords) keyword
+         WHERE LOWER(keyword) = LOWER($2)
+       )
+     LIMIT 1`,
+    [type, categoryName],
+  );
+
+  if ((keywordMatchResult.rowCount ?? 0) > 0) {
+    const keywordCategory = mapFinanceCategory(keywordMatchResult.rows[0]);
+    cache.set(cacheKey, keywordCategory);
+    cache.set(`id:${keywordCategory.id}`, keywordCategory);
+    return keywordCategory;
+  }
+
   const createdResult = await client.query(
-    `INSERT INTO entry_categories (id, user_id, kind, name)
+    `INSERT INTO entry_categories (id, type, name, keywords)
      VALUES ($1, $2, $3, $4)
-     RETURNING id, kind, name`,
-    [randomUUID(), userId, kind, categoryName],
+     RETURNING id, type, name, keywords`,
+    [randomUUID(), type, categoryName, [categoryName.toLowerCase()]],
   );
 
   const createdCategory = mapFinanceCategory(createdResult.rows[0]);
@@ -129,7 +164,7 @@ function mapSettings(row: Record<string, unknown> | undefined): InvestmentSettin
 export async function getFinanceState(userId: string): Promise<FinanceState> {
   const [entriesResult, settingsResult, categoriesResult] = await Promise.all([
     pool.query(
-      `SELECT e.id, e.kind, e.name, e.category_id, c.name AS category_name, e.amount, e.raw_amount, e.frequency
+      `SELECT e.id, e.type, e.name, e.category_id, c.name AS category_name, e.amount, e.raw_amount, e.frequency
        FROM entries e
        JOIN entry_categories c ON c.id = e.category_id
        WHERE e.user_id = $1
@@ -143,19 +178,19 @@ export async function getFinanceState(userId: string): Promise<FinanceState> {
       [userId],
     ),
     pool.query(
-      `SELECT id, kind, name
+      `SELECT id, type, name, keywords
        FROM entry_categories
-       WHERE user_id = $1
-       ORDER BY kind ASC, name ASC`,
-      [userId],
+       WHERE TRUE
+       ORDER BY type ASC, name ASC`,
+      [],
     ),
   ]);
 
   const revenues = entriesResult.rows
-    .filter((row: { kind: string }) => row.kind === "income")
+    .filter((row: { type: string }) => row.type === "income")
     .map(mapFinanceItem);
   const costs = entriesResult.rows
-    .filter((row: { kind: string }) => row.kind === "expense")
+    .filter((row: { type: string }) => row.type === "expense")
     .map(mapFinanceItem);
 
   return {
@@ -166,21 +201,34 @@ export async function getFinanceState(userId: string): Promise<FinanceState> {
   };
 }
 
-export async function getFinanceCategories(userId: string): Promise<FinanceCategory[]> {
+export async function getFinanceEntries(userId: string, type?: FinanceEntryType): Promise<FinanceEntry[]> {
   const result = await pool.query(
-    `SELECT id, kind, name
+    `SELECT e.id, e.type, e.name, e.category_id, c.name AS category_name, e.amount, e.raw_amount, e.frequency
+     FROM entries e
+     JOIN entry_categories c ON c.id = e.category_id
+     WHERE e.user_id = $1
+       AND ($2::text IS NULL OR e.type = $2)
+     ORDER BY e.created_at ASC`,
+    [userId, type ?? null],
+  );
+
+  return result.rows.map(mapFinanceEntry);
+}
+
+export async function getFinanceCategories(): Promise<FinanceCategory[]> {
+  const result = await pool.query(
+    `SELECT id, type, name, keywords
      FROM entry_categories
-     WHERE user_id = $1
-     ORDER BY kind ASC, name ASC`,
-    [userId],
+     WHERE TRUE
+     ORDER BY type ASC, name ASC`,
+    [],
   );
 
   return result.rows.map(mapFinanceCategory);
 }
 
 export async function createFinanceCategory(
-  userId: string,
-  kind: FinanceEntryKind,
+  type: FinanceEntryType,
   name: string,
 ): Promise<FinanceCategory> {
   const categoryName = name.trim();
@@ -189,11 +237,11 @@ export async function createFinanceCategory(
   }
 
   const existingResult = await pool.query(
-    `SELECT id, kind, name
+    `SELECT id, type, name, keywords
      FROM entry_categories
-     WHERE user_id = $1 AND kind = $2 AND LOWER(name) = LOWER($3)
+     WHERE type = $1 AND LOWER(name) = LOWER($2)
      LIMIT 1`,
-    [userId, kind, categoryName],
+    [type, categoryName],
   );
 
   if ((existingResult.rowCount ?? 0) > 0) {
@@ -201,36 +249,88 @@ export async function createFinanceCategory(
   }
 
   const result = await pool.query(
-    `INSERT INTO entry_categories (id, user_id, kind, name)
+    `INSERT INTO entry_categories (id, type, name, keywords)
      VALUES ($1, $2, $3, $4)
-     RETURNING id, kind, name`,
-    [randomUUID(), userId, kind, categoryName],
+     RETURNING id, type, name, keywords`,
+    [randomUUID(), type, categoryName, [categoryName.toLowerCase()]],
   );
 
   return mapFinanceCategory(result.rows[0]);
 }
 
+export async function createFinanceEntry(
+  userId: string,
+  type: FinanceEntryType,
+  entry: Omit<FinanceItemInput, "id"> & { id?: string },
+): Promise<FinanceItem> {
+  const client = await pool.connect();
+  const entryId = entry.id?.trim() || randomUUID();
+
+  try {
+    await client.query("BEGIN");
+
+    const category = await resolveCategory(
+      userId,
+      type,
+      {
+        id: entryId,
+        name: entry.name,
+        categoryId: entry.categoryId,
+        categoryName: entry.categoryName,
+        amount: entry.amount,
+        rawAmount: entry.rawAmount,
+        frequency: entry.frequency,
+      },
+      new Map<string, FinanceCategory>(),
+      client,
+    );
+
+    await client.query(
+      `INSERT INTO entries (id, user_id, type, name, category_id, amount, raw_amount, frequency)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [entryId, userId, type, entry.name, category.id, entry.amount, entry.rawAmount, entry.frequency],
+    );
+
+    await client.query("COMMIT");
+
+    return {
+      id: entryId,
+      name: entry.name,
+      categoryId: category.id,
+      categoryName: category.name,
+      amount: entry.amount,
+      rawAmount: entry.rawAmount,
+      frequency: entry.frequency,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function replaceFinanceEntries(
   userId: string,
-  kind: FinanceEntryKind,
+  type: FinanceEntryType,
   entries: FinanceItemInput[],
 ): Promise<FinanceItem[]> {
   const client = await pool.connect();
 
   try {
     await client.query("BEGIN");
-    await client.query(`DELETE FROM entries WHERE user_id = $1 AND kind = $2`, [userId, kind]);
+    await client.query(`DELETE FROM entries WHERE user_id = $1 AND type = $2`, [userId, type]);
 
     const categoryCache = new Map<string, FinanceCategory>();
     const savedEntries: FinanceItem[] = [];
 
     for (const entry of entries) {
-      const category = await resolveCategory(userId, kind, entry, categoryCache, client);
+      const category = await resolveCategory(userId, type, entry, categoryCache, client);
 
       await client.query(
-        `INSERT INTO entries (id, user_id, kind, name, category_id, amount, raw_amount, frequency)
+        `INSERT INTO entries (id, user_id, type, name, category_id, amount, raw_amount, frequency)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [entry.id, userId, kind, entry.name, category.id, entry.amount, entry.rawAmount, entry.frequency],
+        [entry.id, userId, type, entry.name, category.id, entry.amount, entry.rawAmount, entry.frequency],
       );
 
       savedEntries.push({
